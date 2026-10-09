@@ -1,0 +1,76 @@
+name: Colectar catálogo y fichas Tienda BNA
+
+on:
+  workflow_dispatch:
+    inputs:
+      descargar_fichas:
+        description: 'Después del catálogo, descargar las fichas técnicas (puede tardar bastante)'
+        required: true
+        type: boolean
+        default: false
+      paralelas:
+        description: 'Páginas de fichas en paralelo (2 recomendado)'
+        required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+        default: '2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: colector-bna-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  colectar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Colectar todas las categorías y páginas
+        run: python -u github_colector_bna.py
+
+      - name: Descargar fichas técnicas (opcional)
+        if: ${{ inputs.descargar_fichas }}
+        run: python -u descargar_fichas_catalogo.py --paralelas ${{ inputs.paralelas }}
+
+      - name: Auditar fichas (si se solicitaron)
+        if: ${{ inputs.descargar_fichas }}
+        run: python -u auditar_fichas.py
+
+      - name: Construir glosario observado (si se solicitaron fichas)
+        if: ${{ inputs.descargar_fichas }}
+        run: python -u construir_glosario_bna.py
+
+      - name: Subir catálogo, fichas y reportes como artefacto
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bna-catalogo-fichas-${{ github.run_number }}
+          path: |
+            cache_bna/catalogo_bna.json
+            cache_bna/fichas/*.json
+            salidas/**
+            categorias_bna.json
+          if-no-files-found: warn
+          compression-level: 6
+          retention-days: 14
