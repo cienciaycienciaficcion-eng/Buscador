@@ -151,7 +151,7 @@ def descubrir_categorias_bna(page):
         return path
 
     try:
-        url = "https://www.tiendabna.com.ar/catalog?query=producto&o=" + ORDEN_BNA
+        url = "https://www.tiendabna.com.ar/catalog"
         print("[BNA] Descubriendo categorías desde la web...")
 
         def on_response(response):
