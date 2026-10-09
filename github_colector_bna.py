@@ -8,7 +8,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
-from buscador_bna import descubrir_categorias_bna, ejecutar_scraper
+from buscador_bna import ejecutar_scraper
 from catalogo_bna import cargar_catalogo_bna
 
 
@@ -51,43 +51,27 @@ def main():
     (BASE / "salidas").mkdir(exist_ok=True)
     print("=" * 72)
     print("COLECTOR AUTOMÁTICO TIENDA BNA - GITHUB ACTIONS")
-    print("Busca el catálogo sin usar la palabra 'producto' como filtro.")
+    print("Recorre el catálogo general página por página, sin cargarlo completo de una vez.")
     print("=" * 72)
 
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        page = browser.new_page(locale="es-AR", viewport={"width": 1440, "height": 1000})
-        try:
-            categorias = descubrir_categorias_bna(page)
-        finally:
-            page.close()
-            browser.close()
-
+    # La recolección se hace sobre el catálogo general de Tienda BNA.
+    # No intentamos descubrir categorías: el catálogo general ya contiene
+    # los productos de todas ellas y la tienda debe recorrerse página a página.
+    categorias = {}
     (BASE / "salidas" / "categorias_descubiertas.json").write_text(
         json.dumps(categorias, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    if not categorias:
-        print("[AVISO] No se detectaron categorías. Se intentará el catálogo general sin filtro de texto.")
-        objetivos = [(None, "Catálogo general")]
-    else:
-        objetivos = []
-        for nombre, info in categorias.items():
-            ruta = info.get("href") or info.get("slug")
-            if ruta:
-                objetivos.append((ruta, nombre))
-        if not objetivos:
-            objetivos = [(None, "Catálogo general")]
+    objetivos = [(None, "Catálogo general")]
 
     errores = []
     productos_leidos_total = 0
     for i, (ruta, nombre) in enumerate(objetivos, 1):
         print("\n" + "#" * 72)
-        print(f"[COLECTOR] Categoría {i}/{len(objetivos)}: {nombre}")
-        print("[COLECTOR] Todas las páginas; consulta vacía para no filtrar productos.")
+        print(f"[COLECTOR] Objetivo {i}/{len(objetivos)}: {nombre}")
+        print("[COLECTOR] Catálogo general oficial: query=%5C; recorrido página por página.")
         try:
             productos = ejecutar_scraper(
-                [""],
+                ["\\"],
                 0,
                 0,
                 f"salidas/catalogo_categoria_{i:03d}.json",

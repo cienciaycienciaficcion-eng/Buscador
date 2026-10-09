@@ -30,6 +30,7 @@ import asyncio
 import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import os
 import re
 import subprocess
 import sys
@@ -2690,12 +2691,22 @@ def ejecutar_scraper(
                     f"[{categoria_bna}] (búsqueda base: {base_query})"
                 )
             else:
-                base_url = (
-                    "https://www.tiendabna.com.ar/catalog?query="
-                    + quote(str(base_query).replace(" ", "+"), safe="+")
-                    + "&o=" + ORDEN_BNA
-                )
-                print("[BNA] Alcance: TODAS LAS CATEGORÍAS; catálogo general")
+                # Tienda BNA usa query=\ (barra invertida codificada como %5C)
+                # para mostrar el catálogo general. No usar query vacío.
+                es_catalogo_general = str(base_query).strip() in ("", "\\")
+                if es_catalogo_general:
+                    base_url = (
+                        "https://www.tiendabna.com.ar/catalog?query="
+                        + quote("\\", safe="")
+                        + "&o=" + ORDEN_BNA
+                    )
+                else:
+                    base_url = (
+                        "https://www.tiendabna.com.ar/catalog?query="
+                        + quote(str(base_query).replace(" ", "+"), safe="+")
+                        + "&o=" + ORDEN_BNA
+                    )
+                print("[BNA] Alcance: catálogo general completo (query=%5C)")
 
             print(f"[BNA] Orden forzado: {NOMBRE_ORDEN_BNA} ({ORDEN_BNA})")
             print(f"[BNA] URL inicial: {base_url}")
@@ -2728,6 +2739,27 @@ def ejecutar_scraper(
 
             total = detectar_total_paginas(page)
 
+            # El paginador de la tienda puede no exponer el último enlace en el
+            # DOM renderizado. En catálogo general, si hay tarjetas y el total
+            # detectado parece incompleto, usar la estimación verificada por el
+            # usuario y recorrer las páginas individualmente (sin abrirlas todas
+            # a la vez en el navegador).
+            if str(base_query).strip() in ("", "\\"):
+                try:
+                    tarjetas_iniciales = page.locator("article#modern-variant-card").count()
+                except Exception:
+                    tarjetas_iniciales = 0
+                try:
+                    paginas_estimadas = int(os.environ.get("BNA_CATALOGO_PAGINAS_ESTIMADAS", "2200"))
+                except (TypeError, ValueError):
+                    paginas_estimadas = 2200
+                if tarjetas_iniciales > 0 and paginas_estimadas > 0 and total < paginas_estimadas:
+                    print(
+                        f"[BNA] El paginador DOM solo informa {total} página(s); "
+                        f"se usará el alcance de catálogo general configurado: {paginas_estimadas} páginas."
+                    )
+                    total = paginas_estimadas
+
             if max_pages and max_pages > 0:
                 total_a_recorrer = min(total, max_pages)
                 limite_txt = f" (límite configurado: {max_pages})"
@@ -2758,6 +2790,7 @@ def ejecutar_scraper(
                 f"se recorrerán: {total_a_recorrer}{limite_txt}"
             )
 
+            paginas_vacias_consecutivas = 0
             for pagina in range(1, total_a_recorrer + 1):
                 if pagina == 1:
                     url = base_url
@@ -2772,6 +2805,12 @@ def ejecutar_scraper(
                     n, productos_pagina = extraer_pagina(page, url, query, pagina)
                     productos_actuales = [x for x in productos if x.get("_query") == query]
                     print(f"[BNA]   productos nuevos: {n} | acumulados: {len(productos_actuales)}")
+
+                    if productos_pagina:
+                        paginas_vacias_consecutivas = 0
+                    else:
+                        paginas_vacias_consecutivas += 1
+                        print(f"[BNA]   página sin tarjetas válidas ({paginas_vacias_consecutivas}/3 consecutivas)")
 
                     if modo_fichas_por_pagina:
                         procesar_fichas_de_pagina(
@@ -2810,6 +2849,10 @@ def ejecutar_scraper(
                         locale="es-AR",
                     )
                     gc.collect()
+
+                    if paginas_vacias_consecutivas >= 3:
+                        print("[BNA] Se detiene el recorrido: 3 páginas consecutivas sin productos válidos.")
+                        break
 
                     if max_productos:
                         total_query = len([x for x in productos if x.get("_query") == query])
